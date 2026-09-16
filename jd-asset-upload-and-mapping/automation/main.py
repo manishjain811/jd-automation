@@ -5,56 +5,21 @@ from pathlib import Path
 
 from jira import JiraClient
 from s3 import S3Client
+from akeneo import AkeneoClient
 
-
-# =====================================================
-# CONFIGURATION
-# =====================================================
 
 JOB_1 = "run_columbia_asset_pipeline.py"
-
-ASSET_LABEL_JOB = (
-    "update-asset-labels-columbia.py"
-)
-
-# Jira workflow status
+ASSET_LABEL_JOB = "update-asset-labels-columbia.py"
 TARGET_STATUS = "Development Completed"
-
-# Job 1 output
-CSV_FILE = (
-    "generated/asset_import.csv"
-)
+CSV_FILE = "generated/asset_import.csv"
 
 
-# =====================================================
-# RUN PYTHON JOB
-# =====================================================
-
-def run_python_job(
-    script_name,
-    job_description
-):
-
+def run_python_job(script_name, job_description):
     print()
     print("=" * 60)
-    print(
-        f"RUNNING: {job_description}"
-    )
+    print(f"RUNNING: {job_description}")
     print("=" * 60)
-
-    print(
-        f"Script: {script_name}"
-    )
-
-    # -------------------------------------------------
-    # Run child Python script directly.
-    #
-    # Do NOT use capture_output=True here.
-    # This allows the child script's output to appear
-    # immediately in the terminal.
-    #
-    # -X utf8 fixes Windows CP1252 Unicode issues.
-    # -------------------------------------------------
+    print(f"Script: {script_name}")
 
     result = subprocess.run(
         [
@@ -66,38 +31,20 @@ def run_python_job(
         text=True
     )
 
-    # -------------------------------------------------
-    # Check exit code
-    # -------------------------------------------------
-
     if result.returncode != 0:
-
         raise Exception(
             f"{job_description} failed.\n"
             f"Exit code: {result.returncode}"
         )
 
     print()
-    print(
-        f"✅ {job_description} completed"
-    )
+    print(f"✅ {job_description} completed")
 
     return True
 
 
-# =====================================================
-# PROCESS SINGLE TICKET
-# =====================================================
-
-def process_ticket(
-    jira,
-    s3,
-    ticket
-):
-
-    ticket_key = ticket.get(
-        "key"
-    )
+def process_ticket(jira, s3, ticket):
+    ticket_key = ticket.get("key")
 
     summary = (
         ticket
@@ -121,10 +68,7 @@ def process_ticket(
     failed_step = "Unknown"
 
     try:
-
-        # =================================================
         # STEP 1 - DOWNLOAD + PREPARE EXCEL
-        # =================================================
 
         failed_step = (
             "Download and prepare Excel"
@@ -148,9 +92,7 @@ def process_ticket(
             f"Excel ready: {excel_file}"
         )
 
-        # =================================================
         # STEP 2 - RUN JOB 1
-        # =================================================
 
         failed_step = (
             "Run Columbia asset pipeline"
@@ -161,9 +103,7 @@ def process_ticket(
             "Columbia asset pipeline"
         )
 
-        # =================================================
         # STEP 3 - VERIFY CSV
-        # =================================================
 
         failed_step = (
             "Verify generated CSV"
@@ -174,7 +114,6 @@ def process_ticket(
         )
 
         if not csv_path.exists():
-
             raise Exception(
                 f"Expected CSV was not generated: "
                 f"{CSV_FILE}"
@@ -185,9 +124,7 @@ def process_ticket(
             f"✅ CSV generated: {CSV_FILE}"
         )
 
-        # =================================================
         # STEP 4 - UPLOAD CSV TO S3
-        # =================================================
 
         failed_step = (
             "Upload CSV to S3"
@@ -206,9 +143,11 @@ def process_ticket(
             f"S3 URL: {s3_url}"
         )
 
-        # =================================================
-        # STEP 5 - AKENEO
-        # =================================================
+        # STEP 5 - AKENEO IMPORT
+
+        failed_step = (
+            "Run Akeneo import"
+        )
 
         print()
         print("=" * 60)
@@ -217,14 +156,28 @@ def process_ticket(
         )
         print("=" * 60)
 
-        print(
-            "⏭️ Akeneo import SKIPPED "
-            "(TEST MODE)"
+        akeneo = AkeneoClient()
+
+        execution_id = (
+            akeneo.trigger_import()
         )
 
-        # =================================================
+        print()
+        print(
+            f"Akeneo execution ID: "
+            f"{execution_id}"
+        )
+
+        akeneo.wait_for_completion(
+            execution_id
+        )
+
+        print()
+        print(
+            "✅ Akeneo import completed"
+        )
+
         # STEP 6 - UPDATE ASSET LABELS
-        # =================================================
 
         failed_step = (
             "Run asset label update"
@@ -235,9 +188,7 @@ def process_ticket(
             "Asset label update"
         )
 
-        # =================================================
         # STEP 7 - ADD JIRA SUCCESS COMMENT
-        # =================================================
 
         failed_step = (
             "Add Jira success comment"
@@ -250,7 +201,7 @@ def process_ticket(
             f"CSV: {CSV_FILE}\n"
             "S3: uploaded successfully\n"
             f"S3 URL: {s3_url}\n"
-            "Akeneo: skipped (test mode)\n"
+            "Akeneo: import completed\n"
             "Asset label update: completed"
         )
 
@@ -259,9 +210,7 @@ def process_ticket(
             success_comment
         )
 
-        # =================================================
         # STEP 8 - MOVE JIRA TICKET
-        # =================================================
 
         failed_step = (
             "Move Jira ticket to "
@@ -272,10 +221,6 @@ def process_ticket(
             ticket_key,
             TARGET_STATUS
         )
-
-        # =================================================
-        # SUCCESS
-        # =================================================
 
         print()
         print("#" * 70)
@@ -292,11 +237,6 @@ def process_ticket(
         return True
 
     except Exception as error:
-
-        # =================================================
-        # FAILURE
-        # =================================================
-
         print()
         print("#" * 70)
         print(
@@ -314,12 +254,7 @@ def process_ticket(
             f"Error: {error}"
         )
 
-        # -------------------------------------------------
-        # Add failure comment to Jira
-        # -------------------------------------------------
-
         try:
-
             failure_comment = (
                 "Automation failed.\n\n"
                 f"Failed step: {failed_step}\n"
@@ -334,7 +269,6 @@ def process_ticket(
             )
 
         except Exception as comment_error:
-
             print()
             print(
                 "⚠️ Failed to add Jira failure comment:"
@@ -343,10 +277,6 @@ def process_ticket(
             print(
                 comment_error
             )
-
-        # -------------------------------------------------
-        # Do NOT transition failed tickets
-        # -------------------------------------------------
 
         print()
         print(
@@ -357,12 +287,7 @@ def process_ticket(
         return False
 
 
-# =====================================================
-# MAIN
-# =====================================================
-
 def main():
-
     print()
     print("=" * 70)
     print(
@@ -374,10 +299,7 @@ def main():
     s3 = None
 
     try:
-
-        # =================================================
         # INITIALIZE JIRA
-        # =================================================
 
         print()
         print(
@@ -390,9 +312,7 @@ def main():
             "✅ Jira client initialized"
         )
 
-        # =================================================
         # INITIALIZE S3
-        # =================================================
 
         print()
         print(
@@ -405,9 +325,7 @@ def main():
             "✅ S3 client initialized"
         )
 
-        # =================================================
         # FIND ELIGIBLE JIRA TICKETS
-        # =================================================
 
         print()
         print(
@@ -424,12 +342,7 @@ def main():
             f"automation ticket(s)"
         )
 
-        # -------------------------------------------------
-        # No tickets
-        # -------------------------------------------------
-
         if not tickets:
-
             print()
             print(
                 "No tickets to process."
@@ -437,9 +350,7 @@ def main():
 
             return
 
-        # =================================================
         # PROCESS TICKETS
-        # =================================================
 
         successful = 0
         failed = 0
@@ -453,16 +364,11 @@ def main():
             )
 
             if result:
-
                 successful += 1
-
             else:
-
                 failed += 1
 
-        # =================================================
         # FINAL SUMMARY
-        # =================================================
 
         print()
         print()
@@ -487,11 +393,6 @@ def main():
         print()
 
     except Exception as error:
-
-        # =================================================
-        # GLOBAL ERROR
-        # =================================================
-
         print()
         print("=" * 70)
         print(
@@ -509,10 +410,5 @@ def main():
         sys.exit(1)
 
 
-# =====================================================
-# ENTRY POINT
-# =====================================================
-
 if __name__ == "__main__":
-
     main()
